@@ -11,7 +11,7 @@ import (
 type mockRepository struct {
 	tradeToReturn *Trade
 	errToReturn   error
-	savedTrade    *Trade
+	savedTrades   []*Trade
 }
 
 func (m *mockRepository) GetActiveTrade(ctx context.Context, Symbol string) (*Trade, error) {
@@ -19,7 +19,7 @@ func (m *mockRepository) GetActiveTrade(ctx context.Context, Symbol string) (*Tr
 }
 
 func (m *mockRepository) SaveTrade(ctx context.Context, t *Trade) error {
-	m.savedTrade = t
+	m.savedTrades = append(m.savedTrades, t)
 	return nil
 }
 
@@ -116,7 +116,24 @@ func TestAddExecution(t *testing.T) {
 
 		t.Run(tt.name, func(t *testing.T) {
 
-			repo := &mockRepository{tradeToReturn: tt.activeTrade}
+			var activeTradeForTest *Trade
+
+			if tt.activeTrade != nil {
+				activeTradeForTest = &Trade{
+					Symbol:     tt.activeTrade.Symbol,
+					Direction:  tt.activeTrade.Direction,
+					IsClosed:   tt.activeTrade.IsClosed,
+					Quantity:   tt.activeTrade.Quantity,
+					EntryPrice: tt.activeTrade.EntryPrice,
+				}
+				activeTradeForTest.Executions = append([]Execution{}, tt.activeTrade.Executions...)
+			}
+
+			if activeTradeForTest != nil {
+				activeTradeForTest.AggregateExecutions()
+			}
+
+			repo := &mockRepository{tradeToReturn: activeTradeForTest}
 			service := NewService(repo)
 
 			err := service.AddExecution(context.Background(), tt.newExecution)
@@ -133,7 +150,7 @@ func TestAddExecution(t *testing.T) {
 				return
 			}
 
-			savedTrade := repo.savedTrade
+			savedTrade := repo.savedTrades[0]
 
 			if savedTrade == nil {
 				t.Fatal("Service sucessfuly completed, but trade wasn't saved")
@@ -158,5 +175,159 @@ func TestAddExecution(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func TestAddExecution_PositionFlip(t *testing.T) {
+	appleSymbol := Symbol{Name: "AAPL", PointValue: decimal.NewFromInt(1)}
+	usd := "USD"
+
+	activeTrade := &Trade{
+		Symbol:    appleSymbol,
+		Direction: Long,
+		Quantity:  decimal.NewFromInt(10),
+		IsClosed:  false,
+		Executions: []Execution{
+			{
+				Symbol:    appleSymbol,
+				Direction: Long,
+				Price:     decimal.NewFromInt(150),
+				Quantity:  decimal.NewFromInt(10),
+				Fee:       Money{Amount: decimal.NewFromInt(2), Currency: usd},
+			},
+		},
+	}
+
+	newExecution := Execution{
+		Symbol:    appleSymbol,
+		Direction: Short,
+		Price:     decimal.NewFromInt(170),
+		Quantity:  decimal.NewFromInt(25),
+		Fee:       Money{Amount: decimal.NewFromInt(3), Currency: usd},
+	}
+
+	repo := &mockRepository{tradeToReturn: activeTrade}
+	service := NewService(repo)
+
+	wantFirstClosed := true
+	wantFirstQty := decimal.NewFromInt(10)
+	wantFirstPnL := decimal.NewFromInt(195)
+
+	wantSecondClosed := false
+	wantSecondQty := decimal.NewFromInt(15)
+	wantSecondPnL := decimal.Zero
+
+	err := service.AddExecution(context.Background(), newExecution)
+	if err != nil {
+		t.Fatalf("Service returned an error: %v", err)
+	}
+
+	if len(repo.savedTrades) != 2 {
+		t.Fatalf("2 trades want but got: %d", len(repo.savedTrades))
+	}
+
+	firstTrade := repo.savedTrades[0]
+	secondTrade := repo.savedTrades[1]
+
+	if firstTrade.IsClosed != wantFirstClosed {
+		t.Errorf("1st Trade: IsClosed: got %v, want %v", firstTrade.IsClosed, wantFirstClosed)
+	}
+	if !firstTrade.Quantity.Equal(wantFirstQty) {
+		t.Errorf("1st Trade: Quantity: got %s, want %s", firstTrade.Quantity, wantFirstQty)
+	}
+	if !firstTrade.PnL.Equal(wantFirstPnL) {
+		t.Errorf("1st Trade:  PnL: got %s, want %s", firstTrade.PnL, wantFirstPnL)
+	}
+
+	if secondTrade.IsClosed != wantSecondClosed {
+		t.Errorf("2nd Trade: IsClosed: got %v, want %v", secondTrade.IsClosed, wantSecondClosed)
+	}
+	if !secondTrade.Quantity.Equal(wantSecondQty) {
+		t.Errorf("2nd Trade: Quantity: got %s, want %s", secondTrade.Quantity, wantSecondQty)
+	}
+	if !secondTrade.PnL.Equal(wantSecondPnL) {
+		t.Errorf("2nd Trade: PnL: got %s, want %s", secondTrade.PnL, wantSecondPnL)
+	}
+}
+
+func TestAddExecution_PositionFlip_AfterPartialClose(t *testing.T) {
+	appleSymbol := Symbol{Name: "AAPL", PointValue: decimal.NewFromInt(1)}
+	usd := "USD"
+
+	activeTrade := &Trade{
+		Symbol:    appleSymbol,
+		Direction: Long,
+		Quantity:  decimal.NewFromInt(10),
+		IsClosed:  false,
+		Executions: []Execution{
+			{
+				Symbol:    appleSymbol,
+				Direction: Long,
+				Price:     decimal.NewFromInt(150),
+				Quantity:  decimal.NewFromInt(10),
+				Fee:       Money{Amount: decimal.NewFromInt(2), Currency: usd},
+			},
+		},
+	}
+
+	newExecution1 := Execution{
+		Symbol:    appleSymbol,
+		Direction: Short,
+		Price:     decimal.NewFromInt(170),
+		Quantity:  decimal.NewFromInt(5),
+		Fee:       Money{Amount: decimal.NewFromInt(3), Currency: usd},
+	}
+
+	newExecution2 := Execution{
+		Symbol:    appleSymbol,
+		Direction: Short,
+		Price:     decimal.NewFromInt(170),
+		Quantity:  decimal.NewFromInt(8),
+		Fee:       Money{Amount: decimal.NewFromInt(3), Currency: usd},
+	}
+
+	repo := &mockRepository{tradeToReturn: activeTrade}
+	service := NewService(repo)
+
+	wantFirstClosed := true
+	wantFirstQty := decimal.NewFromInt(10)
+	wantFirstPnL := decimal.NewFromInt(192)
+
+	wantSecondClosed := false
+	wantSecondQty := decimal.NewFromInt(3)
+	wantSecondPnL := decimal.Zero
+
+	if err := service.AddExecution(context.Background(), newExecution1); err != nil {
+		t.Fatalf("partial close failed: %v", err)
+	}
+	if err := service.AddExecution(context.Background(), newExecution2); err != nil {
+		t.Fatalf("Service returned an error: %v", err)
+	}
+
+	if len(repo.savedTrades) != 3 {
+		t.Fatalf("3 trades want but got: %d", len(repo.savedTrades))
+	}
+
+	firstTrade := repo.savedTrades[1]
+	secondTrade := repo.savedTrades[2]
+
+	if firstTrade.IsClosed != wantFirstClosed {
+		t.Errorf("1st Trade: IsClosed: got %v, want %v", firstTrade.IsClosed, wantFirstClosed)
+	}
+	if !firstTrade.Quantity.Equal(wantFirstQty) {
+		t.Errorf("1st Trade: Quantity: got %s, want %s", firstTrade.Quantity, wantFirstQty)
+	}
+	if !firstTrade.PnL.Equal(wantFirstPnL) {
+		t.Errorf("1st Trade:  PnL: got %s, want %s", firstTrade.PnL, wantFirstPnL)
+	}
+
+	if secondTrade.IsClosed != wantSecondClosed {
+		t.Errorf("2nd Trade: IsClosed: got %v, want %v", secondTrade.IsClosed, wantSecondClosed)
+	}
+	if !secondTrade.Quantity.Equal(wantSecondQty) {
+		t.Errorf("2nd Trade: Quantity: got %s, want %s", secondTrade.Quantity, wantSecondQty)
+	}
+	if !secondTrade.PnL.Equal(wantSecondPnL) {
+		t.Errorf("2nd Trade: PnL: got %s, want %s", secondTrade.PnL, wantSecondPnL)
 	}
 }

@@ -109,7 +109,9 @@ func (trade *Trade) AggregateExecutions() {
 		if exec.Direction == trade.Direction {
 			totalEntryQuantity = totalEntryQuantity.Add(exec.Quantity)
 			totalEntryCost = totalEntryCost.Add(exec.Price.Mul(exec.Quantity))
-			trade.EntryPrice = totalEntryCost.Div(totalEntryQuantity)
+			if totalEntryQuantity.GreaterThan(decimal.Zero) {
+				trade.EntryPrice = totalEntryCost.Div(totalEntryQuantity)
+			}
 		} else {
 			totalExitQuantity = totalExitQuantity.Add(exec.Quantity)
 
@@ -136,9 +138,6 @@ func (trade *Trade) AggregateExecutions() {
 		trade.IsClosed = false
 		trade.Quantity = remainingQty
 	}
-
-	// Фиксация PnL: чистый профит от закрытых частей МИНУС абсолютно все комиссии,
-	// уплаченные за время жизни этого трейда.
 	trade.PnL = realizedGrossPnL.Sub(totalFee)
 
 	trade.Fee = Money{
