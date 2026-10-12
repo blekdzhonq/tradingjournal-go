@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"tradingjournal-go/internal/trade"
 
@@ -8,14 +9,51 @@ import (
 )
 
 func main() {
-	trade := trade.Trade{
-		ID:         "trade-001",
-		Symbol: trade.Symbol{Name: "ES", PointValue:decimal.RequireFromString("50")},
-		EntryPrice: decimal.RequireFromString("100"),
-		ExitPrice:  decimal.RequireFromString("105"),
-		Quantity:   decimal.RequireFromString("20"),
-		Fee:   trade.Money{Currency: "USD", Amount: decimal.RequireFromString("5")},
-		Direction:     trade.Short,}
+	
+	repo := trade.NewInMemoryRepository()
 
-	fmt.Println(trade.CalculatePnl())
+	service := trade.NewService(repo)
+
+	ctx := context.Background()
+
+	Symbol := trade.Symbol{
+		Name: "AAPL",
+		PointValue: decimal.NewFromInt(1),
+	}
+
+	exec := trade.Execution{
+			Symbol: Symbol,
+			Direction: trade.Long,
+			Price: decimal.NewFromInt(100),
+			Quantity: decimal.NewFromInt(10),
+			Fee: trade.Money{Currency:"USD", Amount: decimal.NewFromInt(2)},
+
+		}
+
+	service.AddExecution(
+		ctx,
+	 	exec)
+		
+	t1, err := repo.GetActiveTrade(ctx, Symbol.Name)
+
+	if err!=nil{
+		fmt.Println(err.Error())
+	}
+
+	fmt.Println("Trade 1")
+	fmt.Printf("trade1 IsClosed= %v Pnl= %q ", t1.IsClosed, t1.PnL)
+
+	exec2 := trade.Execution{
+			Symbol: Symbol,
+			Direction: trade.Short,
+			Price: decimal.NewFromInt(90),
+			Quantity: decimal.NewFromInt(20),
+			Fee: trade.Money{Currency:"USD", Amount: decimal.NewFromInt(1)},
+
+		}
+
+	service.AddExecution(ctx, exec2)
+
+	
+
 }

@@ -5,35 +5,36 @@ import (
 	"sync"
 )
 
-type InMemoryRepository struct {
-	mu     sync.RWMutex
+type InMemoryRepository struct{
 	trades map[string]*Trade
+	rm sync.RWMutex
 }
 
-func NewInMemoryRepository() *InMemoryRepository {
+func NewInMemoryRepository() *InMemoryRepository{
 	return &InMemoryRepository{
 		trades: make(map[string]*Trade),
 	}
 }
 
-func (r *InMemoryRepository) GetActiveTrade(ctx context.Context, symbol string) (*Trade, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+ func (r *InMemoryRepository) GetActiveTrade(ctx context.Context, symbolName string) (*Trade, error){
+	r.rm.RLock()
+	defer r.rm.RUnlock()
 
-	trade, exists := r.trades[symbol]
+	trade, exists := r.trades[symbolName]
 
-	if !exists || trade.IsClosed {
+	if !exists{
 		return nil, nil
 	}
 
 	return trade, nil
+
 }
 
-func (r *InMemoryRepository) SaveTrade(ctx context.Context, trade *Trade) error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (r *InMemoryRepository) SaveTrade(ctx context.Context, t *Trade) error{
+	r.rm.Lock()
+	defer r.rm.Unlock()
 
-	r.trades[trade.Symbol.Name] = trade
+	r.trades[t.Symbol.Name] = t
 
 	return nil
 
